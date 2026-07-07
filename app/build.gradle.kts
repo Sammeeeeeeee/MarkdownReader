@@ -12,8 +12,21 @@ android {
         applicationId = "com.sam.markdownreader"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 3
+        versionName = "1.1.1"
+    }
+
+    signingConfigs {
+        // A stable release identity so updates install in place (Obtainium etc.).
+        // The committed keystore is public, so it authenticates nothing — it only
+        // keeps the signature consistent across CI runs. Point the env vars at a
+        // private keystore to harden it.
+        create("release") {
+            storeFile = file(System.getenv("RELEASE_KEYSTORE") ?: "$rootDir/signing/release.keystore")
+            storePassword = System.getenv("RELEASE_KEYSTORE_PASSWORD") ?: "markdownreader"
+            keyAlias = System.getenv("RELEASE_KEY_ALIAS") ?: "markdownreader"
+            keyPassword = System.getenv("RELEASE_KEY_PASSWORD") ?: "markdownreader"
+        }
     }
 
     buildTypes {
@@ -21,7 +34,7 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
     compileOptions {

@@ -22,6 +22,8 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 Requires JDK 17+. The build targets compileSdk 36 with material3 1.4.0.
 
+Release builds are signed with the committed `signing/release.keystore` so that every release carries the same signature and updates (e.g. via Obtainium) install in place. The keystore is public and therefore authenticates nothing — to use a private key instead, set `RELEASE_KEYSTORE`, `RELEASE_KEYSTORE_PASSWORD`, `RELEASE_KEY_ALIAS` and `RELEASE_KEY_PASSWORD` in the build environment.
+
 ## Structure
 
 - `markdown/` — parser façade over commonmark-java + the Compose renderer (blocks, inlines, tables, code with lightweight syntax highlighting).
