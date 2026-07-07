@@ -25,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Constraints
@@ -49,15 +50,21 @@ fun MdTable(table: TableBlock, ctx: RenderCtx, modifier: Modifier = Modifier) {
     val headStyle = MaterialTheme.typography.titleSmallEmphasized
     val bodyStyle = MaterialTheme.typography.bodyMedium
 
-    val rows: List<List<CellUi>> = remember(table, ctx.styles) {
+    val hlStyle = SpanStyle(background = cs.tertiaryContainer, color = cs.onTertiaryContainer)
+    val rows: List<List<CellUi>> = remember(table, ctx.styles, ctx.searchQuery, cs) {
         val out = mutableListOf<List<CellUi>>()
         table.childList().forEach { section ->
             val header = section is TableHead
             if (section is TableHead || section is TableBody) {
                 section.childList().filterIsInstance<TableRow>().forEach { row ->
                     out += row.childList().filterIsInstance<TableCell>().map { cell ->
-                        val (text, inline) = buildInlineText(cell, ctx.styles, ctx.doc.footnoteNumbers, ctx.onLink)
-                        CellUi(text, inline, cell.alignment, header)
+                        val (text, inline) = buildInlineText(
+                            cell, ctx.styles, ctx.doc.footnoteNumbers, ctx.onLink, ctx.doc.abbreviations,
+                        )
+                        val highlighted =
+                            if (ctx.searchQuery.isNullOrBlank()) text
+                            else text.highlightMatches(ctx.searchQuery, hlStyle)
+                        CellUi(highlighted, inline, cell.alignment, header)
                     }
                 }
             }

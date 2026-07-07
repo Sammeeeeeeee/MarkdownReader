@@ -30,13 +30,21 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.FormatListBulleted
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ErrorOutline
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.MenuBook
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.SearchOff
 import androidx.compose.material.icons.rounded.VerticalAlignTop
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -64,6 +72,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -73,7 +82,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
@@ -119,10 +132,29 @@ fun ReaderScreen(
     var fabExpanded by remember { mutableStateOf(false) }
     val tocSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
+    var searchActive by rememberSaveable { mutableStateOf(false) }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    var currentMatch by rememberSaveable { mutableIntStateOf(0) }
+
     val ready = state as? ReaderState.Ready
     val doc = ready?.doc
     val fmOffset = if (doc?.frontMatter?.isNotEmpty() == true) 1 else 0
     val footnotesIndex = fmOffset + (doc?.blocks?.size ?: 0)
+
+    // Every match is the index of the list item that contains it, one entry per hit.
+    val searchMatches = remember(doc, searchQuery) {
+        val query = searchQuery.trim()
+        if (doc == null || query.isBlank()) emptyList()
+        else doc.searchTexts.flatMapIndexed { index, text ->
+            var count = 0
+            var at = text.indexOf(query, ignoreCase = true)
+            while (at >= 0) {
+                count++
+                at = text.indexOf(query, at + query.length, ignoreCase = true)
+            }
+            List(count) { index }
+        }
+    }
 
     val openDocLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -135,6 +167,21 @@ fun ReaderScreen(
 
     fun scrollTo(index: Int) {
         scope.launch { listState.animateScrollToItem(index) }
+    }
+
+    fun goToMatch(index: Int) {
+        if (searchMatches.isEmpty()) return
+        val wrapped = index.mod(searchMatches.size)
+        currentMatch = wrapped
+        scrollTo(fmOffset + searchMatches[wrapped])
+    }
+
+    // New query: jump to its first hit.
+    LaunchedEffect(searchQuery, doc) {
+        currentMatch = 0
+        if (searchQuery.isNotBlank() && searchMatches.isNotEmpty()) {
+            listState.animateScrollToItem(fmOffset + searchMatches[0])
+        }
     }
 
     val linkHandler = rememberUpdatedState<(String) -> Unit> { dest ->
@@ -150,6 +197,13 @@ fun ReaderScreen(
                 }
             }
             dest.startsWith("footnote:") -> scrollTo(footnotesIndex)
+            dest.startsWith("abbr:") -> {
+                val abbr = dest.removePrefix("abbr:")
+                val expansion = doc?.abbreviations?.get(abbr)
+                if (expansion != null) {
+                    scope.launch { snackbar.showSnackbar("$abbr — $expansion") }
+                }
+            }
             dest.startsWith("http://") || dest.startsWith("https://") ||
                 dest.startsWith("mailto:") || dest.startsWith("tel:") -> {
                 runCatching { uriHandler.openUri(dest) }
@@ -209,9 +263,34 @@ fun ReaderScreen(
                                 Text("${(fontZoom * 100).roundToInt()}%  ×")
                             }
                         }
+                        if (doc != null) {
+                            IconButton(onClick = {
+                                searchActive = !searchActive
+                                if (!searchActive) searchQuery = ""
+                            }) {
+                                Icon(
+                                    if (searchActive) Icons.Rounded.SearchOff else Icons.Rounded.Search,
+                                    contentDescription = if (searchActive) "Close search" else "Search in document",
+                                )
+                            }
+                        }
                     },
                     scrollBehavior = scrollBehavior,
                 )
+                AnimatedVisibility(visible = searchActive) {
+                    SearchBar(
+                        query = searchQuery,
+                        onQueryChange = { searchQuery = it },
+                        matchCount = searchMatches.size,
+                        currentMatch = if (searchMatches.isEmpty()) 0 else currentMatch + 1,
+                        onPrevious = { goToMatch(currentMatch - 1) },
+                        onNext = { goToMatch(currentMatch + 1) },
+                        onClose = {
+                            searchActive = false
+                            searchQuery = ""
+                        },
+                    )
+                }
                 LinearWavyProgressIndicator(
                     progress = { progress },
                     // A static wave: expressive shape without the distracting motion.
@@ -261,6 +340,7 @@ fun ReaderScreen(
                     onZoom = { fontZoom = it },
                     onLink = onLink,
                     fmOffset = fmOffset,
+                    searchQuery = searchQuery.trim().takeIf { searchActive && it.isNotBlank() },
                 )
             }
             // Tapping anywhere outside the open FAB menu closes it.
@@ -274,6 +354,10 @@ fun ReaderScreen(
         }
     }
     BackHandler(enabled = fabExpanded) { fabExpanded = false }
+    BackHandler(enabled = searchActive) {
+        searchActive = false
+        searchQuery = ""
+    }
 
     if (showToc && doc != null) {
         val currentLazyIndex by remember { derivedStateOf { listState.firstVisibleItemIndex } }
@@ -299,9 +383,12 @@ private fun ReaderBody(
     onZoom: (Float) -> Unit,
     onLink: (String) -> Unit,
     fmOffset: Int,
+    searchQuery: String? = null,
 ) {
     val styles = rememberInlineStyleSet()
-    val ctx = remember(doc, styles, onLink) { RenderCtx(styles, doc, onLink) }
+    val ctx = remember(doc, styles, onLink, searchQuery) {
+        RenderCtx(styles, doc, onLink, searchQuery = searchQuery)
+    }
     val baseDensity = LocalDensity.current
     val zoomState = rememberUpdatedState(fontZoom)
 
@@ -329,21 +416,92 @@ private fun ReaderBody(
         androidx.compose.runtime.CompositionLocalProvider(
             LocalDensity provides Density(baseDensity.density, baseDensity.fontScale * fontZoom)
         ) {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 6.dp, bottom = 140.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
-            ) {
-                if (doc.frontMatter.isNotEmpty()) {
-                    item(key = "front-matter") { FrontMatterCard(doc.frontMatter) }
+            // Long-press selects text anywhere in the document.
+            SelectionContainer {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 6.dp, bottom = 140.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    if (doc.frontMatter.isNotEmpty()) {
+                        item(key = "front-matter") { FrontMatterCard(doc.frontMatter) }
+                    }
+                    itemsIndexed(doc.blocks, key = { index, _ -> index }) { _, block ->
+                        MarkdownBlock(block, ctx)
+                    }
+                    if (doc.footnotes.isNotEmpty()) {
+                        item(key = "footnotes") { FootnotesSection(ctx) }
+                    }
                 }
-                itemsIndexed(doc.blocks, key = { index, _ -> index }) { _, block ->
-                    MarkdownBlock(block, ctx)
-                }
-                if (doc.footnotes.isNotEmpty()) {
-                    item(key = "footnotes") { FootnotesSection(ctx) }
-                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SearchBar(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    matchCount: Int,
+    currentMatch: Int,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onClose: () -> Unit,
+) {
+    val cs = MaterialTheme.colorScheme
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focusRequester.requestFocus() }
+
+    Surface(color = cs.surfaceContainer, shape = RoundedCornerShape(28.dp), modifier = Modifier
+        .fillMaxWidth()
+        .padding(horizontal = 16.dp, vertical = 6.dp)
+    ) {
+        Row(
+            Modifier.padding(start = 18.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            BasicTextField(
+                value = query,
+                onValueChange = onQueryChange,
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodyLarge.copy(color = cs.onSurface),
+                cursorBrush = SolidColor(cs.primary),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = { onNext() }),
+                decorationBox = { innerTextField ->
+                    Box(contentAlignment = Alignment.CenterStart) {
+                        if (query.isEmpty()) {
+                            Text(
+                                "Find in document",
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = cs.onSurfaceVariant,
+                            )
+                        }
+                        innerTextField()
+                    }
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(vertical = 14.dp)
+                    .focusRequester(focusRequester),
+            )
+            if (query.isNotBlank()) {
+                Text(
+                    if (matchCount == 0) "0/0" else "$currentMatch/$matchCount",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (matchCount == 0) cs.error else cs.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 6.dp),
+                )
+            }
+            IconButton(onClick = onPrevious, enabled = matchCount > 0) {
+                Icon(Icons.Rounded.KeyboardArrowUp, contentDescription = "Previous match")
+            }
+            IconButton(onClick = onNext, enabled = matchCount > 0) {
+                Icon(Icons.Rounded.KeyboardArrowDown, contentDescription = "Next match")
+            }
+            IconButton(onClick = onClose) {
+                Icon(Icons.Rounded.Close, contentDescription = "Close search")
             }
         }
     }

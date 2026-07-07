@@ -8,6 +8,8 @@ material3 = "1.5.0-alpha16"
 iconsExtended = "1.7.8"
 coil = "2.7.0"
 commonmark = "0.29.0"
+jlatexmath = "0.2.0"
+junit = "4.13.2"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -16,6 +18,8 @@ androidx-lifecycle-viewmodel-compose = { group = "androidx.lifecycle", name = "l
 compose-material3 = { group = "androidx.compose.material3", name = "material3", version.ref = "material3" }
 compose-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended", version.ref = "iconsExtended" }
 coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
+jlatexmath-android = { group = "ru.noties", name = "jlatexmath-android", version.ref = "jlatexmath" }
+junit = { group = "junit", name = "junit", version.ref = "junit" }
 commonmark = { group = "org.commonmark", name = "commonmark", version.ref = "commonmark" }
 commonmark-ext-gfm-tables = { group = "org.commonmark", name = "commonmark-ext-gfm-tables", version.ref = "commonmark" }
 commonmark-ext-gfm-strikethrough = { group = "org.commonmark", name = "commonmark-ext-gfm-strikethrough", version.ref = "commonmark" }
