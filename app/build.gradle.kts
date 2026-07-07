@@ -12,8 +12,8 @@ android {
         applicationId = "com.sam.markdownreader"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
     }
 
     buildTypes {
@@ -43,6 +43,7 @@ dependencies {
     implementation(libs.compose.material3)
     implementation(libs.compose.icons.extended)
     implementation(libs.coil.compose)
+    implementation(libs.jlatexmath.android)
     implementation(libs.commonmark)
     implementation(libs.commonmark.ext.gfm.tables)
     implementation(libs.commonmark.ext.gfm.strikethrough)
@@ -53,4 +54,5 @@ dependencies {
     implementation(libs.commonmark.ext.ins)
     implementation(libs.commonmark.ext.yaml.front.matter)
     implementation(libs.commonmark.ext.image.attributes)
+    testImplementation(libs.junit)
 }

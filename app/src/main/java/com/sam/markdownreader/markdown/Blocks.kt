@@ -2,7 +2,10 @@
 
 package com.sam.markdownreader.markdown
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,24 +26,32 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Campaign
 import androidx.compose.material.icons.outlined.Circle
+import androidx.compose.material.icons.outlined.HideImage
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Lightbulb
 import androidx.compose.material.icons.outlined.Report
 import androidx.compose.material.icons.outlined.Sell
 import androidx.compose.material.icons.outlined.WarningAmber
 import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.FormatQuote
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -50,6 +61,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextAlign
@@ -57,6 +69,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import coil.compose.SubcomposeAsyncImage
 import org.commonmark.ext.footnotes.FootnoteDefinition
 import org.commonmark.ext.gfm.alerts.Alert
 import org.commonmark.ext.gfm.alerts.AlertTitle
@@ -85,6 +98,7 @@ data class RenderCtx(
     val doc: ParsedDocument,
     val onLink: (String) -> Unit,
     val listDepth: Int = 0,
+    val searchQuery: String? = null,
 )
 
 fun Node.childList(): List<Node> {
@@ -106,8 +120,15 @@ fun MdInlineText(
     color: Color = Color.Unspecified,
     textAlign: TextAlign? = null,
 ) {
-    val (text, inline) = remember(node, ctx.styles) {
-        buildInlineText(node, ctx.styles, ctx.doc.footnoteNumbers, ctx.onLink)
+    val cs = MaterialTheme.colorScheme
+    val (text, inline) = remember(node, ctx.styles, ctx.searchQuery, cs) {
+        val built = buildInlineText(node, ctx.styles, ctx.doc.footnoteNumbers, ctx.onLink, ctx.doc.abbreviations)
+        val query = ctx.searchQuery
+        if (query.isNullOrBlank()) built
+        else built.first.highlightMatches(
+            query,
+            SpanStyle(background = cs.tertiaryContainer, color = cs.onTertiaryContainer),
+        ) to built.second
     }
     Text(
         text = text,
@@ -129,10 +150,12 @@ fun MarkdownBlock(node: Node, ctx: RenderCtx, modifier: Modifier = Modifier) {
         is BlockQuote -> MdBlockQuote(node, ctx, modifier)
         is BulletList -> MdList(node, ctx, modifier)
         is OrderedList -> MdList(node, ctx, modifier)
-        is FencedCodeBlock -> MdCodeBlock(node.literal.orEmpty(), node.info, modifier)
-        is IndentedCodeBlock -> MdCodeBlock(node.literal.orEmpty(), null, modifier)
+        is FencedCodeBlock -> MdCodeBlock(node.literal.orEmpty(), node.info, modifier, highlightQuery = ctx.searchQuery)
+        is IndentedCodeBlock -> MdCodeBlock(node.literal.orEmpty(), null, modifier, highlightQuery = ctx.searchQuery)
         is ThematicBreak -> MdDivider(modifier)
         is TableBlock -> MdTable(node, ctx, modifier)
+        is DetailsBlock -> MdDetails(node, ctx, modifier)
+        is DefinitionList -> MdDefinitionList(node, ctx, modifier)
         is HtmlBlock -> MdHtmlBlock(node, ctx, modifier)
         is LinkReferenceDefinition -> Unit
         is FootnoteDefinition -> Unit
@@ -192,6 +215,12 @@ private fun Paragraph.imageOnlyChildren(): List<Image>? {
 
 @Composable
 private fun MdParagraph(node: Paragraph, ctx: RenderCtx, modifier: Modifier = Modifier) {
+    // A paragraph that is exactly one $$…$$ equation renders as a display block.
+    val displayMath = node.childList().singleOrNull() as? MathNode
+    if (displayMath != null && displayMath.display) {
+        MdMathBlock(displayMath.latex, modifier)
+        return
+    }
     val images = node.imageOnlyChildren()
     if (images != null) {
         Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -225,13 +254,25 @@ fun MdBlockImage(image: Image, ctx: RenderCtx, modifier: Modifier = Modifier) {
         } else {
             Modifier.fillMaxWidth()
         }
-        AsyncImage(
-            model = image.destination,
+        SubcomposeAsyncImage(
+            model = imageModel(image.destination),
             contentDescription = alt.ifBlank { null },
             modifier = imageModifier
                 .clip(RoundedCornerShape(20.dp))
                 .heightIn(max = 480.dp),
             contentScale = ContentScale.Fit,
+            loading = {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(160.dp)
+                        .background(MaterialTheme.colorScheme.surfaceContainerLow),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    LoadingIndicator(Modifier.size(40.dp))
+                }
+            },
+            error = { ImageErrorCard(alt = alt, destination = image.destination) },
         )
         if (caption != null) {
             Text(
@@ -241,6 +282,46 @@ fun MdBlockImage(image: Image, ctx: RenderCtx, modifier: Modifier = Modifier) {
                 textAlign = TextAlign.Center,
                 modifier = Modifier.padding(top = 6.dp),
             )
+        }
+    }
+}
+
+/** A tidy placeholder for images that fail to load, instead of a broken-image glyph. */
+@Composable
+private fun ImageErrorCard(alt: String, destination: String?) {
+    val cs = MaterialTheme.colorScheme
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        color = cs.surfaceContainerLow,
+    ) {
+        Column(
+            Modifier.padding(horizontal = 18.dp, vertical = 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Icon(
+                Icons.Outlined.HideImage,
+                contentDescription = null,
+                tint = cs.outline,
+                modifier = Modifier.size(32.dp),
+            )
+            Text(
+                alt.ifBlank { "Image unavailable" },
+                style = MaterialTheme.typography.titleSmall,
+                color = cs.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+            destination?.takeIf { it.isNotBlank() }?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = cs.outline,
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }
@@ -470,7 +551,7 @@ fun MdHtmlBlock(node: HtmlBlock, ctx: RenderCtx, modifier: Modifier = Modifier) 
                 val width = htmlAttr(tag.value, "width")?.filter { it.isDigit() }?.toIntOrNull()
                 if (src != null) {
                     AsyncImage(
-                        model = src,
+                        model = imageModel(src),
                         contentDescription = alt,
                         modifier = (if (width != null) Modifier.width(width.dp) else Modifier)
                             .heightIn(min = 20.dp, max = 400.dp)
@@ -515,6 +596,98 @@ private fun htmlAttr(tag: String, name: String): String? {
         ?: Regex("$name\\s*=\\s*'([^']*)'", RegexOption.IGNORE_CASE).find(tag)
     if (quoted != null) return quoted.groupValues[1]
     return Regex("$name\\s*=\\s*([^\\s>]+)", RegexOption.IGNORE_CASE).find(tag)?.groupValues?.get(1)
+}
+
+// ----------------------------------------------------------------- details
+
+@Composable
+fun MdDetails(node: DetailsBlock, ctx: RenderCtx, modifier: Modifier = Modifier) {
+    val cs = MaterialTheme.colorScheme
+    var expanded by rememberSaveable { mutableStateOf(node.initiallyOpen) }
+    val chevron by animateFloatAsState(if (expanded) 180f else 0f, label = "chevron")
+
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        color = cs.surfaceContainerLow,
+    ) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded },
+            ) {
+                Icon(
+                    Icons.Rounded.ExpandMore,
+                    contentDescription = if (expanded) "Collapse" else "Expand",
+                    tint = cs.primary,
+                    modifier = Modifier
+                        .size(24.dp)
+                        .rotate(chevron),
+                )
+                Spacer(Modifier.width(10.dp))
+                if (node.summary != null) {
+                    MdInlineText(
+                        node.summary, ctx,
+                        style = MaterialTheme.typography.titleMediumEmphasized,
+                        color = cs.onSurface,
+                    )
+                } else {
+                    Text(
+                        "Details",
+                        style = MaterialTheme.typography.titleMediumEmphasized,
+                        color = cs.onSurface,
+                    )
+                }
+            }
+            AnimatedVisibility(visible = expanded) {
+                Column(
+                    Modifier.padding(start = 6.dp, top = 12.dp, bottom = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    node.childList().forEach { MarkdownBlock(it, ctx) }
+                }
+            }
+        }
+    }
+}
+
+// --------------------------------------------------------- definition lists
+
+@Composable
+fun MdDefinitionList(node: DefinitionList, ctx: RenderCtx, modifier: Modifier = Modifier) {
+    val cs = MaterialTheme.colorScheme
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        node.childList().forEachIndexed { index, item ->
+            when (item) {
+                is DefinitionTerm -> MdInlineText(
+                    item, ctx,
+                    style = MaterialTheme.typography.titleMediumEmphasized,
+                    color = cs.onSurface,
+                    modifier = Modifier.padding(top = if (index == 0) 0.dp else 10.dp),
+                )
+                is DefinitionDetail -> {
+                    val barColor = cs.secondary
+                    MdInlineText(
+                        item, ctx,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = cs.onSurfaceVariant,
+                        modifier = Modifier
+                            .padding(start = 12.dp)
+                            .drawBehind {
+                                drawRoundRect(
+                                    color = barColor,
+                                    size = Size(3.dp.toPx(), size.height),
+                                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(1.5.dp.toPx()),
+                                )
+                            }
+                            .padding(start = 14.dp),
+                    )
+                }
+            }
+        }
+    }
 }
 
 // ------------------------------------------------------------ front matter

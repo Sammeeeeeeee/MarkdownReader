@@ -49,12 +49,45 @@ class ReaderViewModel : ViewModel() {
     private fun read(context: Context, source: DocSource): Pair<String, String> = when (source) {
         is DocSource.FromText -> source.text to source.title
         is DocSource.FromUri -> {
-            val text = context.contentResolver.openInputStream(source.uri)
-                ?.bufferedReader()?.use { it.readText() }
-                ?: throw IllegalStateException("The document provider returned nothing")
             val name = displayName(context, source.uri)
+            requireMarkdownFile(context, source.uri, name)
+            val bytes = context.contentResolver.openInputStream(source.uri)
+                ?.use { it.readBytes() }
+                ?: throw IllegalStateException("The document provider returned nothing")
+            requireTextContent(bytes, name)
             runCatching { Recents.add(context, source.uri, name) }
-            text to name
+            String(bytes, Charsets.UTF_8) to name
+        }
+    }
+
+    /** Extensions this app is willing to render. Everything else is rejected up front. */
+    private val markdownExtensions = setOf(
+        "md", "markdown", "mdown", "mkd", "mkdn", "mdx", "txt", "text",
+    )
+    private val markdownMimeTypes = setOf(
+        "text/markdown", "text/x-markdown", "text/plain",
+    )
+
+    private fun requireMarkdownFile(context: Context, uri: Uri, name: String) {
+        val extension = name.substringAfterLast('.', "").lowercase()
+        if (extension in markdownExtensions) return
+        val mime = runCatching { context.contentResolver.getType(uri) }.getOrNull()?.lowercase()
+        if (mime != null && (mime in markdownMimeTypes || mime.startsWith("text/"))) return
+        val label = if (extension.isEmpty()) name else ".$extension"
+        throw IllegalArgumentException(
+            "\"$label\" isn't a markdown file. This app opens .md, .markdown and plain-text documents."
+        )
+    }
+
+    /** Cheap binary sniff: a genuine text file never contains NUL bytes. */
+    private fun requireTextContent(bytes: ByteArray, name: String) {
+        val probe = minOf(bytes.size, 8192)
+        for (i in 0 until probe) {
+            if (bytes[i] == 0.toByte()) {
+                throw IllegalArgumentException(
+                    "\"$name\" looks like a binary file, not markdown."
+                )
+            }
         }
     }
 

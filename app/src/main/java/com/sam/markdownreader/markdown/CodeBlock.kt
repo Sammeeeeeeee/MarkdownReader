@@ -31,13 +31,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.sam.markdownreader.ui.theme.MonoFamily
 import kotlinx.coroutines.delay
 
 @Composable
-fun MdCodeBlock(code: String, info: String?, modifier: Modifier = Modifier) {
+fun MdCodeBlock(code: String, info: String?, modifier: Modifier = Modifier, highlightQuery: String? = null) {
     val cs = MaterialTheme.colorScheme
     val language = info?.trim()?.takeWhile { !it.isWhitespace() }?.takeIf { it.isNotBlank() }
     val palette = CodePalette(
@@ -48,8 +49,13 @@ fun MdCodeBlock(code: String, info: String?, modifier: Modifier = Modifier) {
         annotation = cs.secondary,
     )
     val trimmed = code.trimEnd('\n')
-    val highlighted = remember(trimmed, language, cs) {
-        SyntaxHighlight.highlight(trimmed, language, palette)
+    val highlighted = remember(trimmed, language, cs, highlightQuery) {
+        val syntax = SyntaxHighlight.highlight(trimmed, language, palette)
+        if (highlightQuery.isNullOrBlank()) syntax
+        else syntax.highlightMatches(
+            highlightQuery,
+            SpanStyle(background = cs.tertiaryContainer, color = cs.onTertiaryContainer),
+        )
     }
 
     val clipboard = LocalClipboardManager.current
